@@ -1,0 +1,139 @@
+name: Build Wheels
+
+on:
+  push:
+    paths-ignore:
+      - 'landingpage/**'
+      - 'py2nativeStub/**'
+    tags:
+      - '*'
+  workflow_dispatch:
+    inputs:
+      os:
+        description: 'Select Operating System'
+        required: true
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+          - ubuntu-24.04-arm
+          - macos-26-intel
+          - windows-11-arm
+          - all
+      python_version:
+        description: 'Select Python Version'
+        required: true
+        default: '3.14'
+        type: choice
+        options:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+          - '3.14'
+          - '3.14t'
+          - '3.15'
+          - '3.15t'
+          - all
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  setup-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      # These must exactly match the 'id: logic' step outputs
+      os_matrix: ${{ steps.logic.outputs.os }}
+      py_matrix: ${{ steps.logic.outputs.py }}
+    steps:
+      - id: logic
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_OS: ${{ github.event.inputs.os }}
+          INPUT_PY: ${{ github.event.inputs.python_version }}
+        run: |
+          # 1. Define full sets
+          ALL_OS='["ubuntu-latest", "macos-latest", "macos-26-intel", "windows-11-arm", "windows-latest", "ubuntu-24.04-arm"]'
+          ALL_PY='["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]'
+          
+          # 2. Safely evaluate logic
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            # If triggered by a git push (like a tag)
+            FINAL_OS=$ALL_OS
+            FINAL_PY=$ALL_PY
+          else
+            # If triggered manually via UI
+            if [[ "$INPUT_OS" == "all" ]]; then
+              FINAL_OS=$ALL_OS
+            else
+              FINAL_OS="[\"$INPUT_OS\"]"
+            fi
+          
+            if [[ "$INPUT_PY" == "all" ]]; then
+              FINAL_PY=$ALL_PY
+            else
+              FINAL_PY="[\"$INPUT_PY\"]"
+            fi
+          fi
+          
+          # 3. Write to GitHub Output (Verify spelling here)
+          echo "os=$FINAL_OS" >> $GITHUB_OUTPUT
+          echo "py=$FINAL_PY" >> $GITHUB_OUTPUT
+
+  build:
+    needs: setup-matrix
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: ${{ fromJson(needs.setup-matrix.outputs.os_matrix) }}
+        python-version: ${{ fromJson(needs.setup-matrix.outputs.py_matrix) }}
+
+    steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-tags: true
+        fetch-depth: 0
+        submodules: recursive
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: 0.11.21
+
+    - name: Setup SSH Key for Upload
+      uses: shimataro/ssh-key-action@v2
+      with:
+        key: ${{ secrets.UPLOAD_SSH_PRIVATE_KEY }}
+        name: id_upload
+        known_hosts: ${{ vars.UPLOAD_KNOWN_HOSTS }}
+        config: |
+          Host upload
+            HostName ${{ vars.UPLOAD_HOST }}
+            User ${{ vars.UPLOAD_USER }}
+            IdentityFile ~/.ssh/id_upload
+
+    - name: Run build
+      if: ${{ vars.UPLOAD_HOST }}
+      shell: bash
+      run: |
+        uv run --python ${{ matrix.python-version }} smoketest.py --pythonVersion ${{ matrix.python-version }} --pro --upload upload:${{ vars.UPLOAD_TARGET }} --sysconfigUpload wheel --version ${{ github.ref_name }}
+
+    - name: Build wheel and run embedded smoke test
+      if: ${{ ! vars.UPLOAD_HOST }}
+      shell: bash
+      run: |
+        uv run --python ${{ matrix.python-version }} smoketest.py --pythonVersion ${{ matrix.python-version }} --version ${{ github.ref_name }}
+
+    - name: Upload installer as Artifact
+      if: ${{ ! vars.UPLOAD_HOST }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: py2native-artifact  # Artifact name
+        path: |
+          py2native/dist/*.whl

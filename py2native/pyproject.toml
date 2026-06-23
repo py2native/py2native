@@ -1,0 +1,39 @@
+[project]
+name = "py2native"
+version = "0.0.0"
+description = "Python to Native Compiler"
+readme = "README.md"
+authors = [
+    { name = "Ruediger Jungbeck", email = "ruediger.jungbeck@rsj.de" }
+]
+license = {text = "MIT"}
+keywords = ["py2native", "native", "compiler"]
+claasifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+]
+requires-python = ">=3.10.0"
+dependencies = [
+    "auditwheel>=6.6.0; sys_platform == 'linux'",
+    "cython>=3.2.5",
+    "rich>=13.0.0",
+    "setuptools>=82.0.1",
+    "tomli>=2.0.1; python_version < '3.11'",
+    "uv>=0.11.21",
+]
+
+[project.urls]
+Homepage = "https://py2native.dev"
+Repository = "https://github.com/py2native/py2native"
+Issues = "https://github.com/py2native/py2native/issues"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[project.scripts]
+py2native = "py2native.cli:main"

@@ -1,0 +1,179 @@
+name: Build Linux Policy Wheels
+
+on:
+  push:
+    paths-ignore:
+      - "landingpage/**"
+      - "py2nativeStub/**"
+    tags:
+      - "*"
+  workflow_dispatch:
+    inputs:
+      policy:
+        description: "Select Linux policy"
+        required: true
+        default: "manylinux_2_28"
+        type: choice
+        options:
+          - manylinux_2_28
+          - musllinux_1_2
+          - all
+      arch:
+        description: "Select architecture"
+        required: true
+        default: "x86_64"
+        type: choice
+        options:
+          - x86_64
+          - aarch64
+          - all
+      python_version:
+        description: "Select Python Version"
+        required: true
+        default: "3.14"
+        type: choice
+        options:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+          - "3.14t"
+          - "3.15"
+          - "3.15t"
+          - all
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  setup-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      policy_matrix: ${{ steps.logic.outputs.policy }}
+      arch_matrix: ${{ steps.logic.outputs.arch }}
+      py_matrix: ${{ steps.logic.outputs.py }}
+    steps:
+      - id: logic
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_POLICY: ${{ github.event.inputs.policy }}
+          INPUT_ARCH: ${{ github.event.inputs.arch }}
+          INPUT_PY: ${{ github.event.inputs.python_version }}
+        run: |
+          ALL_POLICY='["manylinux_2_28", "musllinux_1_2"]'
+          ALL_ARCH='["x86_64", "aarch64"]'
+          ALL_PY='["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]'
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            FINAL_POLICY=$ALL_POLICY
+            FINAL_ARCH=$ALL_ARCH
+            FINAL_PY=$ALL_PY
+          else
+            if [[ "$INPUT_POLICY" == "all" ]]; then
+              FINAL_POLICY=$ALL_POLICY
+            else
+              FINAL_POLICY="[\"$INPUT_POLICY\"]"
+            fi
+
+            if [[ "$INPUT_ARCH" == "all" ]]; then
+              FINAL_ARCH=$ALL_ARCH
+            else
+              FINAL_ARCH="[\"$INPUT_ARCH\"]"
+            fi
+
+            if [[ "$INPUT_PY" == "all" ]]; then
+              FINAL_PY=$ALL_PY
+            else
+              FINAL_PY="[\"$INPUT_PY\"]"
+            fi
+          fi
+
+          echo "policy=$FINAL_POLICY" >> "$GITHUB_OUTPUT"
+          echo "arch=$FINAL_ARCH" >> "$GITHUB_OUTPUT"
+          echo "py=$FINAL_PY" >> "$GITHUB_OUTPUT"
+
+  build-policy-wheels:
+    needs: setup-matrix
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        policy: ${{ fromJson(needs.setup-matrix.outputs.policy_matrix) }}
+        arch: ${{ fromJson(needs.setup-matrix.outputs.arch_matrix) }}
+        python-version: ${{ fromJson(needs.setup-matrix.outputs.py_matrix) }}
+    container:
+      image: ${{ matrix.policy == 'manylinux_2_28' && matrix.arch == 'aarch64' && 'quay.io/pypa/manylinux_2_28_aarch64' || matrix.policy == 'manylinux_2_28' && 'quay.io/pypa/manylinux_2_28_x86_64' || matrix.arch == 'aarch64' && 'quay.io/pypa/musllinux_1_2_aarch64' || 'quay.io/pypa/musllinux_1_2_x86_64' }}
+
+    steps:
+      - name: Install base tooling
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if command -v dnf >/dev/null 2>&1; then
+            dnf install -y git curl openssh-clients
+          elif command -v yum >/dev/null 2>&1; then
+            yum install -y git curl openssh-clients
+          elif command -v microdnf >/dev/null 2>&1; then
+            microdnf install -y git curl openssh-clients
+          elif command -v apk >/dev/null 2>&1; then
+            apk add --no-cache git curl openssh-client
+          elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update
+            apt-get install -y git curl openssh-client
+          else
+            echo "No supported package manager found for base tooling" >&2
+            exit 1
+          fi
+
+      - name: Checkout code
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          git init .
+          git config --global --add safe.directory "$PWD"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --force --tags origin
+          git fetch --force origin "${GITHUB_SHA}"
+          git checkout --force --detach FETCH_HEAD
+          git submodule update --init --recursive
+
+      - name: Configure SSH for upload
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' '${{ secrets.UPLOAD_SSH_PRIVATE_KEY }}' > ~/.ssh/id_upload
+          chmod 600 ~/.ssh/id_upload
+          printf '%s\n' '${{ vars.UPLOAD_KNOWN_HOSTS }}' > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Install uv
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Build wheel and run embedded smoke test
+        if: ${{vars.UPLOAD_HOST }}
+        shell: bash
+        run: |
+          uv run --python ${{ matrix.python-version }} smoketest.py --pro --upload ${{ vars.UPLOAD_USER }}@${{ vars.UPLOAD_HOST }}:${{ vars.UPLOAD_TARGET }} --id ~/.ssh/id_upload --sysconfigUpload policy --version ${{ github.ref_name }}
+
+      - name: Build wheel and run embedded smoke test
+        if: ${{ ! vars.UPLOAD_HOST }}
+        shell: bash
+        run: |
+          uv run --python ${{ matrix.python-version }} smoketest.py --pythonVersion ${{ matrix.python-version }} --version ${{ github.ref_name }}
+
+      - name: Upload installer as Artifact
+        if: ${{ ! vars.UPLOAD_HOST }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: py2native-artifact  # Artifact name
+          path: |
+            py2native/dist/*.whl
