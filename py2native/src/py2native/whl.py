@@ -81,7 +81,9 @@ def createWheel(
     moduleNames=None,
     mainModuleName=None,
     sourcePath=None,
-    version=None):
+    version=None,
+    policy=None
+    ):
 
     buildPath = getBuildPath()
 
@@ -230,7 +232,7 @@ def createWheel(
             "\n".join(records).encode("utf-8"),
         )
 
-    pluginManager.auditWheel(runtime.getRuntimePath(), wheelPath, outputPath)
+    pluginManager.auditWheel(runtime.getRuntimePath(), wheelPath, outputPath, policy)
 
     logger.info(f"Successfully built {wheel_name}")
     return wheelPath

@@ -108,7 +108,7 @@ class Plugin:
 
         return plat_name
 
-    def auditWheel(self, runtimePath, wheelPath, outputPath):  #
+    def auditWheel(self, runtimePath, wheelPath, outputPath, policy):  #
         shutil.copy2(wheelPath, outputPath / wheelPath.name)
 
     def getRuntimeLibraries(self, productName, version, libraryPath):

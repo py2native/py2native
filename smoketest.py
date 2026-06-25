@@ -140,6 +140,7 @@ def main():
     parser.add_argument("--sysconfigUpload", type=str, default=None, help="Upload sysconfig")
     parser.add_argument("--verbose", action="store_true", help="Verbose")
     parser.add_argument("--version", type=str, help="Version")
+    parser.add_argument("--policy", type=str, help="Policy")
     args = parser.parse_args()
 
     verbose = ""
@@ -148,7 +149,15 @@ def main():
         verbose = "--verbose "
 
     if args.version:
-        version = f"--version {args.version} "
+        if args.version == "master":
+            version = ""
+        else:
+            version = f"--version {args.version} "
+
+    if args.policy:
+        policy = f"--policy {args.policy} "
+    else:
+        policy = ""
 
     if args.sysconfigUpload:
         pushConfig(args.sysconfigUpload)
@@ -157,7 +166,7 @@ def main():
         with chdir("py2native"):
             with venv(args.pythonVersion):
                 uvRun(
-                    f"py2native {verbose}build {version}--wheel dist --exe py2native --base src/py2native cli *.py"
+                    f"py2native {verbose}build {version}{policy}--wheel dist --exe py2native --base src/py2native cli *.py"
                 )
                 uvRun(
                     f"py2native {verbose}build {version}--exe py2native --embed embed --base src/py2native cli *.py",
@@ -182,7 +191,7 @@ def main():
             shutil.rmtree(pathlib.Path("dist"), ignore_errors=True)
             with venv(args.pythonVersion):
                 uvRun(
-                    f"py2native {verbose}build {version}--license ../../license.dat --public ../../public.pem --library --wheel dist --base src/py2nativepro main *.py",
+                    f"py2native {verbose}build {version}{policy}--license ../../license.dat --public ../../public.pem --library --wheel dist --base src/py2nativepro main *.py",
                     withs=["../../py2native/dist/py2native*.whl"],
                 )
 

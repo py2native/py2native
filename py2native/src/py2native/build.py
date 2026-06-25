@@ -84,7 +84,8 @@ def build(args):
             moduleNames=moduleNames,
             mainModuleName=mainModule if args.library else None,
             sourcePath=sourceDirectory.resolve(),
-            version=args.version
+            version=args.version,
+            policy=args.policy
         )
         logger.info(f"Created wheel at {wheelPath}")
 
@@ -100,7 +101,8 @@ def build(args):
                     moduleNames=moduleNames,
                     mainModuleName=mainModule,
                     sourcePath=sourceDirectory.resolve(),
-                    version=args.version
+                    version=args.version,
+                    policy=args.policy
                 )
                 logger.info(f"Created wheel at {wheelPath}")
             logger.info(f"Embedding {wheelPath} into {args.embed}")

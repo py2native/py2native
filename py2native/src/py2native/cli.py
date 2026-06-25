@@ -39,6 +39,7 @@ def main():
     buildParser.add_argument("--no-console", action="store_true", help="Disable console")
     buildParser.add_argument("--exe", type=str, default=None, help="Output executable name (default: derived from main module)")
     buildParser.add_argument("--version", type=str, default=None, help="Version")
+    buildParser.add_argument("--policy", type=str, default=None, help="Policy")
     pluginManager.extendBuildParser(buildParser)
     buildParser.add_argument("mainModule", type=str, help="Main modules")
     buildParser.add_argument("sources", type=str, nargs="+", help="Source files")

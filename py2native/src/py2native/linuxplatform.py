@@ -112,7 +112,7 @@ class Plugin:
     def fixPlatformName(self, plat_name):
         return plat_name
 
-    def auditWheel(self, runtimePath, wheelPath, outputPath):
+    def auditWheel(self, runtimePath, wheelPath, outputPath, policy):
         if self.library:
             runtimeLibName = runtimePath.name
             runtimeBaseName = runtimeLibName.split(".so")[0] + ".so"
@@ -136,7 +136,19 @@ class Plugin:
         else:
             # For executable wheels, auditwheel creates a wrapper script that breaks
             # uv run. The RPATH is already correct ($ORIGIN), so just copy the wheel.
-            shutil.copy2(wheelPath, outputPath / wheelPath.name)
+
+            targetName = wheelPath.name
+
+            if policy == "manylinux_2_28":
+                targetName = targetName.replace("-linux_x86_64", "-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64")
+                targetName=targetName.replace("-linux_aarch64", "-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64")
+            elif policy == "musllinux_1_2":
+                targetName = targetName.replace("-linux_x86_64", "-musllinux_1_2_x86_64")
+                targetName = targetName.replace("-linux_aarch64", "-musllinux_1_2_aarch64")
+            targetPath = outputPath / targetName
+
+            shutil.copy2(wheelPath, targetPath)
+            logger.info(f"{policy=}  {wheelPath=} {targetPath=}")
 
     def getRuntimeLibraries(self, productName, version, libraryPath):
         # Place libpython next to the binary so $ORIGIN RPATH resolves.
