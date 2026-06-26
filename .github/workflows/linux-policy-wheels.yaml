@@ -33,7 +33,6 @@ on:
         default: "3.14"
         type: choice
         options:
-          - "3.10"
           - "3.11"
           - "3.12"
           - "3.13"
@@ -64,7 +63,7 @@ jobs:
         run: |
           ALL_POLICY='["manylinux_2_28", "musllinux_1_2"]'
           ALL_ARCH='["x86_64", "aarch64"]'
-          ALL_PY='["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]'
+          ALL_PY='["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]'
 
           if [[ "$EVENT_NAME" == "push" ]]; then
             FINAL_POLICY=$ALL_POLICY

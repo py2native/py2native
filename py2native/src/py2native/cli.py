@@ -12,7 +12,7 @@ logger = logging.getLogger("py2native")
 
 # __package__ = "py2native"
 
-from .build import build
+from .builder import build
 from .plugin import pluginManager
 
 buildPath = None

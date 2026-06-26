@@ -148,6 +148,8 @@ def main():
     if args.verbose:
         verbose = "--verbose "
 
+    version = ""
+    
     if args.version:
         if args.version == "master":
             version = ""

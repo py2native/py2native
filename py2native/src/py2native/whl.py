@@ -14,6 +14,7 @@ try:
 except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib
 
+
 from . import runtime
 from .plugin import pluginManager
 from .utils import getBuildPath
@@ -98,7 +99,7 @@ def createWheel(
     productName = pyProject["project"]["name"]
     if version is None:
         version = pyProject["project"]["version"]
-    dependencies = pyProject["project"].get("dependencies", [])
+    #dependencies = pyProject["project"].get("dependencies", [])
 
     python_tag, abi_tag, plat_tag = get_wheel_tags(library)
 
@@ -109,14 +110,55 @@ def createWheel(
 
     full_tag = f"{python_tag}-{abi_tag}-{plat_tag}"
 
-    metadata = f"Metadata-Version: 2.1\n"
-    metadata += f"Name: {productName}\n"
-    metadata += f"Version: {version}\n"
+    #metadata = f"Metadata-Version: 2.1\n"
+    #metadata += f"Name: {productName}\n"
+    #metadata += f"Version: {version}\n"
 
-    for dep in dependencies:
-        metadata += f"Requires-Dist: {dep}\n"
+    #for dep in dependencies:
+    #    metadata += f"Requires-Dist: {dep}\n"
 
-    metadata = metadata.encode("utf-8")
+    #metadata = metadata.encode("utf-8")
+
+    # Build wheel METADATA directly from pyproject.toml — avoids invoking the
+    # build backend (uv_build is absent in pristine/isolated envs) and avoids
+    # Python 3.14 HeaderParseError when README content lands in a header value.
+    proj = pyProject.get("project", {})
+    _lines = [
+        "Metadata-Version: 2.1",
+        f"Name: {productName}",
+        f"Version: {version}",
+    ]
+    if "description" in proj:
+        _lines.append(f"Summary: {proj['description'].strip()}")
+    if "requires-python" in proj:
+        _lines.append(f"Requires-Python: {proj['requires-python']}")
+    for _author in proj.get("authors", []):
+        _aname, _aemail = _author.get("name", ""), _author.get("email", "")
+        if _aname and _aemail:
+            _lines.append(f"Author-Email: {_aname} <{_aemail}>")
+        elif _aemail:
+            _lines.append(f"Author-Email: {_aemail}")
+        elif _aname:
+            _lines.append(f"Author: {_aname}")
+    for _dep in proj.get("dependencies", []):
+        _lines.append(f"Requires-Dist: {_dep}")
+    for _cls in proj.get("classifiers", []):
+        _lines.append(f"Classifier: {_cls}")
+    for _label, _url in proj.get("urls", {}).items():
+        _lines.append(f"Project-URL: {_label}, {_url}")
+    _body = ""
+    _readme = proj.get("readme")
+    if _readme:
+        if isinstance(_readme, str):
+            _readme_path = pyprojectTomlPath.parent / _readme
+            _ct = "text/markdown" if _readme.endswith(".md") else "text/x-rst" if _readme.endswith(".rst") else "text/plain"
+        else:
+            _readme_path = pyprojectTomlPath.parent / _readme.get("file", "")
+            _ct = _readme.get("content-type", "text/plain")
+        if _readme_path.exists():
+            _body = _readme_path.read_text(encoding="utf-8")
+            _lines.append(f"Description-Content-Type: {_ct}")
+    metadata = ("\n".join(_lines) + "\n\n" + _body).encode("utf-8")
 
     # Notice the updated Tag line here
     wheel_info = f"Wheel-Version: 1.0\n"
