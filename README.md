@@ -4,7 +4,6 @@
 [![Timestamp GIT](https://timestampgit.dev/api/statusLast/py2native/py2native)](https://timestampgit.dev/status/py2native/py2native)
 [![Timestamp GIT](https://timestampgit.dev/api/statusBadge/py2native/py2native)](https://timestampgit.dev/status/py2native/py2native)
 
-
 # Py2Native
 
 A Python-to-native compiler that compiles your proprietary Python files to C via Cython,
