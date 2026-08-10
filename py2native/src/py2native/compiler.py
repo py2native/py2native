@@ -86,8 +86,11 @@ def compile(
     if cwd in resolved_source_path.parents or cwd == resolved_source_path:
         relPath = resolved_source_path.relative_to(cwd)
     else:
-        # Fallback if sourcePath is not under cwd
-        relPath = resolved_source_path.name
+        # Fallback if sourcePath is not under cwd.
+        # Use parent_name/name to avoid conflicts when the output exe
+        # has the same name as the source directory.
+        _parent = resolved_source_path.parent.name
+        relPath = pathlib.Path(_parent) / resolved_source_path.name if _parent else resolved_source_path.name
 
     modBuildPath = getBuildPath() / relPath
     modBuildPath.mkdir(parents=True, exist_ok=True)
@@ -272,18 +275,45 @@ def compile(
 
         cSources.append((modBuildPath / package).with_suffix(".c"))
 
-    if len(pySources):
-        pySources = list(map(str, pySources))
-        rest = pySources
-        while len(rest):
-            batch = rest[:20]
-            args = []
-            for sd in sourceDirs:
-                args.extend(["-I", str(sd)])
-            args.extend(["--output-file", str(modBuildPath), "--shared", sharedName])
-            args.extend(batch)
-            cythonCall(*args)
-            rest = rest[20:]
+    # For library builds, patch any .pxd files that cimport from
+    # _p2n_bootstrap so that compiled modules do not hard-depend on the
+    # host process's _p2n_bootstrap.  Each cimported name is replaced with
+    # a cdef object declaration; the Python-level NameError fallback in
+    # the corresponding .py file handles the missing function at runtime.
+    _pxd_backups = {}
+    if library:
+        import re
+        _cimport_re = re.compile(
+            r'^from\s+_p2n_bootstrap\s+cimport\s+(.+)$', re.MULTILINE
+        )
+        for _pxd_path in sourcePath.glob("*.pxd"):
+            _content = _pxd_path.read_text()
+            _m = _cimport_re.search(_content)
+            if _m:
+                _names = [n.strip() for n in _m.group(1).split(",")]
+                _new_lines = [
+                    "# library build - patched by py2native (no cimport from _p2n_bootstrap)"
+                ]
+                for _name in _names:
+                    _new_lines.append(f"cdef object {_name}")
+                _pxd_backups[_pxd_path] = _content
+                _pxd_path.write_text("\n".join(_new_lines) + "\n")
+    try:
+        if len(pySources):
+            pySources = list(map(str, pySources))
+            rest = pySources
+            while len(rest):
+                batch = rest[:20]
+                args = []
+                for sd in sourceDirs:
+                    args.extend(["-I", str(sd)])
+                args.extend(["--output-file", str(modBuildPath), "--shared", sharedName])
+                args.extend(batch)
+                cythonCall(*args)
+                rest = rest[20:]
+    finally:
+        for _pxd_path, _content in _pxd_backups.items():
+            _pxd_path.write_text(_content)
 
     cSourcesRel = []
 
@@ -344,19 +374,11 @@ def compile(
 
     if library:
         logger.info("Linking shared object: %s -> %s", outputName, exeName)
-        with capture_output() as cap:
-            compiler.link_shared_object(objects, exeName, output_dir=str(targetPath))
-        output = cap.getvalue().strip()
-        if output:
-            logger.debug("Linker output: %s", output)
+        compiler.link_shared_object(objects, exeName, output_dir=str(targetPath))
         exePath = targetPath / exeName
 
     else:
-        with capture_output() as cap:
-            compiler.link_executable(objects, outputName, output_dir=str(targetPath))
-        output = cap.getvalue().strip()
-        if output:
-            logger.debug("Linker output: %s", output)
+        compiler.link_executable(objects, outputName, output_dir=str(targetPath))
 
         exePath = targetPath / exeName
         exePath = pluginManager.resolveExePath(exePath)

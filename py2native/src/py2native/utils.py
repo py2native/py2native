@@ -12,8 +12,6 @@ import sysconfig
 
 logger = logging.getLogger(__name__)
 
-from Cython.Tempita import Template
-
 
 buildPath = None
 
@@ -124,6 +122,8 @@ def copytree(src, dst, symlinks=False, ignore=None):
 
 def template(templatePath, targetPath, **kwargs):
 
+    from Cython.Tempita import Template
+
     if isinstance(templatePath, pathlib.Path):
         templateString = templatePath.read_text()
     else:
@@ -210,18 +210,28 @@ class PlatformCompiler:
         all_libraries = list(libraries or []) + info.get("libraries", [])
         all_runtime_dirs = list(runtime_library_dirs or []) + info.get("runtimeLibraryDirs", [])
         all_preargs = list(extra_preargs or []) + info.get("linkerArgs", []) + entangle
+        # Deduplicate while preserving order
+        _seen = set()
+        all_libraries = [x for x in all_libraries if not (x in _seen or _seen.add(x))]
+        _seen.clear()
+        all_library_dirs = [x for x in all_library_dirs if not (x in _seen or _seen.add(x))]
 
-        return self._compiler.link_executable(
-            all_objects, output_progname,
-            output_dir=output_dir,
-            libraries=all_libraries,
-            library_dirs=all_library_dirs,
-            runtime_library_dirs=all_runtime_dirs,
-            debug=debug,
-            extra_preargs=all_preargs,
-            extra_postargs=extra_postargs,
-            target_lang=target_lang,
-        )
+        try:
+            return self._compiler.link_executable(
+                all_objects, output_progname,
+                output_dir=output_dir,
+                libraries=all_libraries,
+                library_dirs=all_library_dirs,
+                runtime_library_dirs=all_runtime_dirs,
+                debug=debug,
+                extra_preargs=all_preargs,
+                extra_postargs=extra_postargs,
+                target_lang=target_lang,
+            )
+        except Exception as e:
+            import sys
+            print(f"Link failed: {e}", file=sys.stderr)
+            raise
 
     def link_shared_object(self, objects, output_filename, output_dir=None,
                            libraries=None, library_dirs=None,
@@ -236,6 +246,11 @@ class PlatformCompiler:
         all_libraries = list(libraries or []) + info.get("libraries", [])
         all_runtime_dirs = list(runtime_library_dirs or []) + info.get("runtimeLibraryDirs", [])
         all_preargs = list(extra_preargs or []) + info.get("libraryLinkerArgs", []) + entangle
+        # Deduplicate while preserving order
+        _seen = set()
+        all_libraries = [x for x in all_libraries if not (x in _seen or _seen.add(x))]
+        _seen.clear()
+        all_library_dirs = [x for x in all_library_dirs if not (x in _seen or _seen.add(x))]
 
         return self._compiler.link_shared_object(
             all_objects, output_filename,

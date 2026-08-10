@@ -1,6 +1,6 @@
 [project]
 name = "py2native"
-version = "0.1.5"
+version = "0.1.9"
 description = "Python to Native Compiler"
 readme = "README.md"
 authors = [

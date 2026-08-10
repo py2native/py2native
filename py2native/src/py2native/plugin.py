@@ -19,7 +19,7 @@ class PluginManager:
         try:
             module = importlib.import_module(module_name, package=__package__)
         except Exception as e:
-            # logger.debug("Failed to load plugin %s: %s", module_name, e)
+            logger.warning("Failed to load plugin %s: %s (sys.executable=%s, sys.path=%s)", module_name, e, getattr(sys, "executable", "?"), sys.path)
             # Dogfood/self-hosting path: allow loading plugins from local
             # `src/<package>` when running from a project checkout without
             # installing that project first.
@@ -32,7 +32,8 @@ class PluginManager:
                         module = importlib.import_module(
                             module_name, package=__package__
                         )
-                    except Exception:
+                    except Exception as e2:
+                        logger.warning("Failed to load plugin %s from src fallback: %s", module_name, e2)
                         return None
                 else:
                     return None
@@ -41,11 +42,13 @@ class PluginManager:
 
         plugin_cls = getattr(module, "Plugin", None)
         if plugin_cls is None:
+            logger.warning("Plugin module %s has no Plugin class", module_name)
             return None
 
         try:
             return plugin_cls(self)
-        except Exception:
+        except Exception as e:
+            logger.warning("Plugin %s constructor failed: %s", module_name, e)
             return None
 
     def register(self, plugin):

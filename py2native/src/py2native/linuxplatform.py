@@ -33,9 +33,8 @@ class Plugin:
             if libDir:
                 compiler.add_library_dir(libDir)
 
-        libraryName = configVars.get("LIBRARY")
-        if libraryName and libraryName.startswith("lib"):
-            compiler.add_library(pathlib.Path(libraryName).stem[3:])
+        # Library is added via getLinkerArgs (per-exe) instead of globally
+        # here to avoid duplicates with setuptools' own library detection.
 
         # Keep dependent/system libraries after libpython for static-link resolution.
         for libGroup in [
@@ -46,6 +45,10 @@ class Plugin:
             for token in libGroup.split():
                 if token.startswith("-l") and len(token) > 2:
                     compiler.add_library(token[2:])
+
+        # Deduplicate libraries (LIBS may overlap with explicit add_library above)
+        _seen = set()
+        compiler.libraries = [lib for lib in compiler.libraries if not (lib in _seen or _seen.add(lib))]
 
         configureCompiler(compiler, noInit=noInit)
 

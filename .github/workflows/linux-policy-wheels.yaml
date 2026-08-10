@@ -161,7 +161,7 @@ jobs:
         if: ${{vars.UPLOAD_HOST }}
         shell: bash
         run: |
-          uv run --python ${{ matrix.python-version }} smoketest.py --pro --upload ${{ vars.UPLOAD_USER }}@${{ vars.UPLOAD_HOST }}:${{ vars.UPLOAD_TARGET }} --id ~/.ssh/id_upload --sysconfigUpload policy --version ${{ github.ref_name }} --policy ${{ matrix.policy }} --pythonVersion ${{ matrix.python-version }}
+          uv run --python ${{ matrix.python-version }} smoketest.py --verbose --pro --upload ${{ vars.UPLOAD_USER }}@${{ vars.UPLOAD_HOST }}:${{ vars.UPLOAD_TARGET }} --id ~/.ssh/id_upload --sysconfigUpload policy --version ${{ github.ref_name }} --policy ${{ matrix.policy }} --pythonVersion ${{ matrix.python-version }}
 
       - name: Build wheel and run embedded smoke test
         if: ${{ ! vars.UPLOAD_HOST }}

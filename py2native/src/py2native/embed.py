@@ -37,7 +37,7 @@ def embed(targetPath, exePath=None, whlPath=None, sourcePath=None):
     with chdir(sourcePath):
         system(f"uv export --no-dev --output-file {str(reqPath)}")
 
-    system(f"uv pip install --python {str(targetPython.resolve())} --no-deps -r {str(reqPath)} --break-system-packages")
+    system(f"uv pip install --python {str(targetPython.resolve())} -r {str(reqPath)} --break-system-packages")
 
     if exePath:
         wrkPath = pluginManager.getExecutablePath(targetPath)
@@ -47,4 +47,3 @@ def embed(targetPath, exePath=None, whlPath=None, sourcePath=None):
     if whlPath:
         system(f"uv pip install --python {str(targetPython.resolve())} --break-system-packages {str(whlPath)}")
     return
-

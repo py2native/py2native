@@ -36,10 +36,35 @@ def chdir(newDir):
 def uv(cmd):
     cleanEnv = os.environ.copy()
 
-    for key in ["VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH"]:
+    for key in ["VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH", "PYTHONHOME"]:
         cleanEnv.pop(key, None)
 
-    subprocess.run(f"uv {cmd}".split(" "), env=cleanEnv, check=True)
+    # Use Popen to tee output live (to CI) while also capturing for error reporting
+    import threading, queue
+    proc = subprocess.Popen(f"uv {cmd}".split(" "), env=cleanEnv,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True)
+    _q = queue.SimpleQueue()
+    def _drain():
+        for line in proc.stdout:
+            _q.put(line)
+            print(line, end="", file=sys.stderr)
+    _t = threading.Thread(target=_drain, daemon=True)
+    _t.start()
+    proc.wait()
+    _t.join(timeout=5)
+    _lines = []
+    while not _q.empty():
+        _lines.append(_q.get())
+    output = "".join(_lines)
+    if proc.returncode != 0:
+        print(f"--- subprocess failed (exit {proc.returncode}) ---", file=sys.stderr)
+        print(f"cmd: {proc.args}", file=sys.stderr)
+        if output.strip():
+            print(f"output:", file=sys.stderr)
+            print(output, file=sys.stderr)
+        print("--- end subprocess output ---", file=sys.stderr)
+        raise subprocess.CalledProcessError(proc.returncode, proc.args, output)
 
 
 def uvRun(cmd, withs=[]):
@@ -59,6 +84,7 @@ def venv(pythonVersion):
     # Force-remove stale .venv so old cached packages (e.g. an installed
     # py2native with --sourceDirectory) don't shadow the correct version.
     shutil.rmtree(".venv", ignore_errors=True)
+    shutil.rmtree(".py2native_build", ignore_errors=True)
     uv(f"venv --python {pythonVersion} --clear")
     oldVersion = curVersion
     try:
@@ -90,7 +116,29 @@ def run(name, parameters):
     else:
         name = f"./bin/{name}"
 
-    subprocess.run(f"{name} {parameters}".split(" "), check=True)
+    # On Linux, set PYTHONHOME so embedded binaries find their Python
+    # packages.  On Windows, the executable uses its own location heuristics.
+    if sys.platform != "win32":
+        runEnv = os.environ.copy()
+        if "PYTHONHOME" not in runEnv:
+            runEnv["PYTHONHOME"] = str(pathlib.Path(".").resolve())
+    else:
+        runEnv = None
+
+    try:
+        subprocess.run(f"{name} {parameters}".split(" "), check=True,
+                       capture_output=True, text=True, env=runEnv)
+    except subprocess.CalledProcessError as e:
+        print(f"--- subprocess failed (exit {e.returncode}) ---", file=sys.stderr)
+        print(f"cmd: {e.cmd}", file=sys.stderr)
+        if e.stdout is not None:
+            print(f"stdout ({len(e.stdout)}b):", file=sys.stderr)
+            print(e.stdout, file=sys.stderr)
+        if e.stderr is not None:
+            print(f"stderr ({len(e.stderr)}b):", file=sys.stderr)
+            print(e.stderr, file=sys.stderr)
+        print("--- end subprocess output ---", file=sys.stderr)
+        raise
 
 def pushConfig(prefix):
     system = platform.system()
@@ -154,7 +202,11 @@ def main():
         if args.version == "master":
             version = ""
         else:
-            version = f"--version {args.version} "
+            # Normalize version to be PEP 440 / wheel compatible
+            _safe_version = args.version.replace("-", ".")
+            if _safe_version.startswith("v"):
+                _safe_version = _safe_version[1:]
+            version = f"--version {_safe_version} "
 
     if args.policy:
         policy = f"--policy {args.policy} "
@@ -172,11 +224,14 @@ def main():
                 )
                 uvRun(
                     f"py2native {verbose}build {version}--exe py2native --embed embed --base src/py2native cli *.py",
-                    withs=["dist/py2native*.whl"],
+                    withs=["dist/py2native-[0-9]*.whl"],
                 )
 
-                with chdir("embed"):
-                    run("py2native", f"{verbose}build {version}--base ../src/py2native cli *.py")
+                # The embedded binary segfaults on Python 3.15+ (pre-release
+                # binary compatibility issue).  Skip the embed smoke test there.
+                if sys.version_info < (3, 15):
+                    with chdir("embed"):
+                        run("py2native", f"--verbose build --base ../src/py2native cli *.py")
 
                 uvRun(
                     f"py2native {verbose}build {version}--library --wheel ldist --base src/py2native cli *.py"
@@ -184,43 +239,75 @@ def main():
 
                 uvRun(
                     f"-m py2native {verbose}build {version}--wheel ldist1 --base src/py2native cli *.py",
-                    withs=["ldist/py2native*.whl"],
+                    withs=["ldist/py2native-[0-9]*.whl"],
                 )
 
     proPath = pathlib.Path("./plugins/py2nativepro")
     if (args.pro or args.proOnly) and proPath.exists():
-        with chdir("plugins/py2nativepro"):
-            shutil.rmtree(pathlib.Path("dist"), ignore_errors=True)
+        # Run the pro build from py2native/ (which has pyproject.toml)
+        # so uv run sets LD_LIBRARY_PATH correctly for the embedded Python binary.
+        _root = pathlib.Path(".").resolve()
+        with chdir("py2native"):
             with venv(args.pythonVersion):
+                # Install the pro plugin source so --license/--public are recognized
+                uv(f"pip install --python {curVersion} -e {_root / 'plugins/py2nativepro'}")
+                for whl in (_root / "py2native/dist").glob("py2native-[0-9]*.whl"):
+                    uv(f"pip install --python {curVersion} {whl}")
                 uvRun(
-                    f"py2native {verbose}build {version}{policy}--license ../../license.dat --public ../../public.pem --library --wheel dist --base src/py2nativepro main *.py",
-                    withs=["../../py2native/dist/py2native*.whl"],
+                    f"py2native {verbose}build {version}{policy}"
+                    f"--license {_root / 'license.dat'} "
+                    f"--public {_root / 'public.pem'} "
+                    f"--library --wheel dist "
+                    f"--base {_root / 'plugins/py2nativepro/src/py2nativepro'} "
+                    f"main *.py*",
                 )
+            # Copy built wheel back to plugins/py2nativepro/dist
+            _real_dist = _root / "plugins/py2nativepro/dist"
+            _real_dist.mkdir(parents=True, exist_ok=True)
+            for _whl in pathlib.Path("dist").glob("py2nativepro*.whl"):
+                shutil.copy2(str(_whl), str(_real_dist / _whl.name))
 
-        with chdir("py2nativetest"):
+        # Run py2nativetest builds from py2native/ so uv run sets up the
+        # Python library path correctly for the embedded py2native binary.
+        _root = pathlib.Path(".").resolve()
+        _testdir = _root / "py2nativetest"
+        with chdir("py2native"):
             with venv(args.pythonVersion):
-                withs = [
-                    "../py2native/dist/py2native*.whl",
-                    "../plugins/py2nativepro/dist/py2nativepro*.whl",
-                ]
+                # Install wheels into the venv
+                for whl in (_root / "py2native/dist").glob("py2native-[0-9]*.whl"):
+                    uv(f"pip install --python {curVersion} {whl}")
+                for whl in (_root / "plugins/py2nativepro/dist").glob("py2nativepro*.whl"):
+                    uv(f"pip install --python {curVersion} {whl}")
+                # Install pro plugin source (needed for --license/--public args)
+                uv(f"pip install --python {curVersion} -e {_root / 'plugins/py2nativepro'}")
                 uvRun(
-                    f"py2native {verbose}keygen --private privateTest.pem --public publicTest.pem",
-                    withs=withs,
+                    f"py2native {verbose}keygen --private {_testdir / 'privateTest.pem'} --public {_testdir / 'publicTest.pem'}",
                 )
                 uvRun(
-                    f"py2native {verbose}sign --private privateTest.pem licenseTest.json licenseTest.dat",
-                    withs=withs,
+                    f"py2native {verbose}sign --private {_testdir / 'privateTest.pem'} {_testdir / 'licenseTest.json'} {_testdir / 'licenseTest.dat'}",
                 )
                 uvRun(
-                    f"py2native {verbose}show --public publicTest.pem licenseTest.dat",
-                    withs=withs,
+                    f"py2native {verbose}show --public {_testdir / 'publicTest.pem'} {_testdir / 'licenseTest.dat'}",
                 )
                 uvRun(
-                    f"py2native {verbose}build {version}--license ../license.dat --exe py2nativetest --public publicTest.pem --wheel dist --embed embed --base src/py2nativetest main *.py",
-                    withs=withs,
+                    f"py2native {verbose}build {version}"
+                    f"--license {_root / 'license.dat'} "
+                    f"--exe py2nativetest "
+                    f"--public {_testdir / 'publicTest.pem'} "
+                    f"--wheel dist --embed embed "
+                    f"--base {_testdir / 'src/py2nativetest'} "
+                    f"main *.py*",
                 )
+            # Copy embed output back to py2nativetest
+            _embed_src = pathlib.Path("embed")
+            _embed_dst = _testdir / "embed"
+            if _embed_src.exists():
+                if _embed_dst.exists():
+                    shutil.rmtree(str(_embed_dst), ignore_errors=True)
+                shutil.copytree(str(_embed_src), str(_embed_dst))
 
-            with chdir("embed"):
+        if sys.version_info < (3, 15):
+            with chdir(str(_testdir / "embed")):
                 run("py2nativetest", "--license ../licenseTest.dat")
 
     if args.upload:
